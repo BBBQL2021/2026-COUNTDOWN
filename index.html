@@ -67,14 +67,28 @@
     @keyframes flipTop { from { transform: rotateX(0deg); } to { transform: rotateX(-90deg); } }
     @keyframes flipBottom { from { transform: rotateX(90deg); } to { transform: rotateX(0deg); } }
 
+    /* ===== 面板：3 秒不操作 -> 完全隐藏 ===== */
     .panel {
       position: absolute; bottom: 30px; right: 30px; z-index: 1000;
-      background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
       padding: 20px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.15);
-      color: #eee; transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-      opacity: 0.2; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      color: #eee;
+      width: 320px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+
+      transition: opacity 0.35s ease, transform 0.35s ease, visibility 0.35s ease;
+      opacity: 1;
+      transform: translateY(0);
+      visibility: visible;
+      pointer-events: auto;
     }
-    .panel:hover, .panel.active { opacity: 1; transform: translateY(-5px); background: rgba(30, 30, 30, 0.85); }
+    .panel.hidden{
+      opacity: 0;
+      transform: translateY(16px);
+      visibility: hidden;
+      pointer-events: none;
+    }
     .panel h3 { margin: 0 0 15px 0; font-size: 14px; color: var(--red-accent); letter-spacing: 2px; text-transform: uppercase; }
     .control-group { margin-bottom: 15px; }
     .control-group label { display: block; font-size: 11px; margin-bottom: 6px; color: #aaa; }
@@ -99,7 +113,7 @@
     #msg-box.show { opacity: 1; visibility: visible; }
     h1 { font-size: 5rem; color: #ffd700; text-shadow: 0 0 30px rgba(255,215,0,0.5); margin: 0; }
 
-    /* ====== 目标时间：点击弹出选择器（自绘图标按钮） ====== */
+    /* ====== 目标时间：点击弹出选择器（自绘按钮） ====== */
     .dt-wrap { position: relative; }
     .dt-wrap input { padding-right: 44px; }
     .dt-btn{
@@ -131,7 +145,7 @@
       background: rgba(255,255,255,0.65);
     }
 
-    /* ====== 文件选择 UI（音乐/歌词统一风格） ====== */
+    /* ====== 文件选择 UI（音乐/歌词统一） ====== */
     .file-ui{
       display:flex;
       align-items:center;
@@ -331,16 +345,21 @@
       </div>
 
       <textarea id="lrc-text" rows="4" placeholder="可选：也可以直接粘贴 LRC（例如：[00:12.30]第一句）&#10;支持多个时间戳：[00:10.00][00:12.00]同一句"></textarea>
-      <p style="font-size: 9px; color: #666; margin: 6px 0 0 0;">* 要实现网易云式逐行高亮，请提供带时间戳的 LRC。</p>
+      <p style="font-size: 9px; color: #666; margin: 6px 0 0 0;">* 要实现逐行高亮，请提供带时间戳的 LRC。</p>
     </div>
 
     <p style="font-size: 9px; color: #666; margin: 0;">* 更改会自动保存。同步链接包含当前设定的时间。</p>
   </div>
 
-  <audio id="a1" loop></audio>
-  <audio id="a2"></audio>
+  <audio id="a1" loop preload="auto"></audio>
+  <audio id="a2" preload="auto"></audio>
 
   <script>
+    // ===== 默认资源（仓库根目录同级） =====
+    const DEFAULT_BGM = "郑润泽 - 如果呢.mp3";
+    const DEFAULT_LRC = "郑润泽 - 如果呢.lrc";
+    const DEFAULT_CELEBRATE = "刘德华 - 恭喜发财.mp3";
+
     let targetTime = new Date('2026-01-01T00:00:00+08:00');
     let isDone = false;
     let isMusicPlaying = false;
@@ -369,9 +388,11 @@
       const [datePart, timePart] = value.split('T');
       const [y, m, d] = datePart.split('-').map(Number);
       const [hh, mm, ss] = timePart.split(':').map(Number);
-      const utcMs = Date.UTC(y, m - 1, d, hh - 8, mm, ss || 0);
-      return utcMs;
+      return Date.UTC(y, m - 1, d, hh - 8, mm, ss || 0);
     }
+
+    // 文件名转 URL（处理中文/空格）
+    function assetUrl(name){ return encodeURI(name); }
 
     // ===== 初始化与同步 =====
     function init() {
@@ -387,6 +408,9 @@
       }
 
       document.getElementById('target').value = formatBJForDatetimeLocal(targetTime.getTime());
+
+      // 默认媒体（不会自动播放，符合浏览器策略）
+      setDefaultMedia();
     }
 
     function saveToLocal() {
@@ -414,18 +438,26 @@
       isMusicPlaying = !isMusicPlaying;
     }
 
-    // ===== 呼吸隐藏面板逻辑 =====
-    let idleTimer;
-    function resetIdle() {
-      const p = document.getElementById('control-panel');
-      p.classList.add('active');
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => p.classList.remove('active'), 3000);
-    }
-    document.addEventListener('mousemove', resetIdle);
-    document.addEventListener('click', resetIdle);
+    // ===== 面板：3 秒不操作完全隐藏 =====
+    const panel = document.getElementById('control-panel');
+    let idleTimer = null;
 
-    // ===== 目标时间：点击即弹出选择器（不依赖空格） =====
+    function showPanelTemporarily() {
+      panel.classList.remove('hidden');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        panel.classList.add('hidden');
+      }, 3000);
+    }
+
+    // 用户任何交互都唤醒（PC+移动）
+    ["pointermove","pointerdown","click","keydown","touchstart","wheel"].forEach(evt => {
+      document.addEventListener(evt, showPanelTemporarily, { passive: true });
+    });
+    // 面板内控件聚焦也唤醒（防止键盘 Tab 后被隐藏）
+    panel.addEventListener("focusin", showPanelTemporarily);
+
+    // ===== 目标时间：点击即弹出选择器 =====
     const targetInput = document.getElementById('target');
     const dtBtn = document.getElementById('dt-btn');
 
@@ -436,7 +468,7 @@
     targetInput.addEventListener('pointerdown', (e) => { if (e.button === 0) openDateTimePicker(); });
     dtBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); openDateTimePicker(); });
 
-    // ===== 通用文件选择 UI：拖拽、清除、显示文件名（音乐/歌词统一） =====
+    // ===== 通用文件选择 UI（拖拽、清除、显示文件名） =====
     function wireFileUI({ fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId, acceptDrop = true, onFile }) {
       const inp = document.getElementById(fileInputId);
       const ui = document.getElementById(uiId);
@@ -462,10 +494,7 @@
       pickBtn.addEventListener('click', () => inp.click());
       inp.addEventListener('change', (e) => setFile(e.target.files && e.target.files[0]));
 
-      clearBtn.addEventListener('click', () => {
-        clearFile();
-        // 不在这里改 sub 文案，让各模块自行设置（音乐/歌词不同）
-      });
+      clearBtn.addEventListener('click', () => clearFile());
 
       if (acceptDrop) {
         ui.addEventListener('dragover', (e) => { e.preventDefault(); ui.classList.add('dragover'); });
@@ -484,6 +513,7 @@
     // ===== 音乐：接入 audio，并显示时长 =====
     function bindAudioPicker({ fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId, audioElId, onAfterSet }) {
       const audio = document.getElementById(audioElId);
+
       const ui = wireFileUI({
         fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId,
         onFile: async (file) => {
@@ -510,21 +540,22 @@
           if (typeof onAfterSet === 'function') onAfterSet(file, audio);
         }
       });
-      return ui;
+
+      return { ui, audio };
     }
 
-    bindAudioPicker({
+    const bgmBind = bindAudioPicker({
       fileInputId:'m1', uiId:'file-ui-1', pickBtnId:'pick-m1', clearBtnId:'clr-m1',
       nameElId:'m1-name', subElId:'m1-sub', audioElId:'a1',
       onAfterSet: (file, audio) => { if (file && isMusicPlaying) audio.play(); }
     });
 
-    bindAudioPicker({
+    const celBind = bindAudioPicker({
       fileInputId:'m2', uiId:'file-ui-2', pickBtnId:'pick-m2', clearBtnId:'clr-m2',
       nameElId:'m2-name', subElId:'m2-sub', audioElId:'a2'
     });
 
-    // ===== 翻页卡片（修复：animationcancel + 超时兜底 + force） =====
+    // ===== 翻页卡片（animationcancel + 超时兜底 + force） =====
     class Card {
       constructor(id) {
         this.el = document.getElementById(id);
@@ -600,15 +631,15 @@
 
     const hCard = new Card('unit-h'), mCard = new Card('unit-m'), sCard = new Card('unit-s');
 
-    // ===== 网易云式实时歌词（LRC） =====
+    // ===== 歌词（LRC） =====
     const lyricsWrap = document.getElementById('lyrics-wrap');
     const viewportEl = document.getElementById('lyrics-viewport');
     const linesEl = document.getElementById('lyrics-lines');
 
-    let lyricData = [];   // [{t, text}]
+    let lyricData = [];
     let lyricIdx = -1;
     let lyricRaf = null;
-    let lyricAudio = document.getElementById('a1'); // 默认跟随等待音乐
+    let lyricAudio = document.getElementById('a1'); // 仅在倒计时阶段跟随 a1
 
     function escapeHtml(s){
       return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -620,7 +651,6 @@
       for (const row of rows) {
         const times = [...row.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g)];
         if (!times.length) continue;
-
         const text = row.replace(/\[[^\]]+\]/g, '').trim();
         for (const m of times) {
           const mm = Number(m[1]);
@@ -638,7 +668,7 @@
       lyricIdx = -1;
       linesEl.style.transform = 'translateY(0px)';
 
-      if (data.length) lyricsWrap.classList.remove('hidden');
+      if (!isDone && data.length) lyricsWrap.classList.remove('hidden');
       else lyricsWrap.classList.add('hidden');
     }
 
@@ -654,7 +684,7 @@
 
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-    // 让 active 行严格“垂直居中”显示（按真实 DOM 测量，不用固定行高）
+    // 让 active 行严格居中（按真实 DOM 测量）
     function centerActiveLine(i) {
       const cur = linesEl.children[i];
       if (!cur) return;
@@ -664,15 +694,14 @@
 
       const first = linesEl.children[0];
       const last = linesEl.children[linesEl.children.length - 1];
+      if (!first || !last) return;
 
       const curCenter = cur.offsetTop + cur.offsetHeight / 2;
       const firstCenter = first.offsetTop + first.offsetHeight / 2;
       const lastCenter = last.offsetTop + last.offsetHeight / 2;
 
-      // translateY 目标：把 curCenter 移到 centerY
       let target = centerY - curCenter;
 
-      // 约束：不让内容整体“过度”滑出（保持首尾也最多只能居中）
       const maxTranslate = centerY - firstCenter;
       const minTranslate = centerY - lastCenter;
       target = clamp(target, minTranslate, maxTranslate);
@@ -691,10 +720,8 @@
 
       lyricIdx = i;
 
-      // 等样式（active 字号变化）生效后再居中，避免抖动
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => centerActiveLine(i));
-      });
+      // 等 active 字号变化生效后再居中
+      requestAnimationFrame(() => requestAnimationFrame(() => centerActiveLine(i)));
     }
 
     function stopLyricSync(){
@@ -705,8 +732,7 @@
     function startLyricSync(){
       stopLyricSync();
       const tick = () => {
-        // 跨年时隐藏歌词：不再更新
-        if (lyricsWrap.classList.contains('hidden')) {
+        if (isDone || lyricsWrap.classList.contains('hidden')) {
           lyricRaf = requestAnimationFrame(tick);
           return;
         }
@@ -722,7 +748,7 @@
       lyricRaf = requestAnimationFrame(tick);
     }
 
-    // 歌词文件 UI（与音乐一致，支持拖拽）
+    // 歌词文件 UI（与音乐一致 + 拖拽）
     const lrcUI = wireFileUI({
       fileInputId:'lrc1',
       uiId:'file-ui-lrc',
@@ -745,32 +771,97 @@
         lyricData = parseLRC(text);
         renderLyrics(lyricData);
         document.getElementById('lrc-sub').textContent = `已加载 ${lyricData.length} 行 · 支持拖拽替换`;
-        // 若正在播放，立刻同步
         startLyricSync();
       }
     });
 
-    // 粘贴 LRC：实时解析（同样启用歌词显示）
+    // 粘贴 LRC：实时解析
     document.getElementById('lrc-text').addEventListener('input', (e) => {
       const text = e.target.value || '';
       lyricData = parseLRC(text);
       renderLyrics(lyricData);
       document.getElementById('lrc-name').textContent = text.trim() ? '已粘贴歌词' : '未选择';
-      document.getElementById('lrc-sub').textContent = text.trim() ? `已加载 ${lyricData.length} 行 · 可拖拽替换` : '支持拖拽 .lrc 文件到此处';
+      document.getElementById('lrc-sub').textContent = text.trim()
+        ? `已加载 ${lyricData.length} 行 · 可拖拽替换`
+        : '支持拖拽 .lrc 文件到此处';
       startLyricSync();
     });
 
-    // a1 播放时启动同步
+    // a1 播放时启动歌词同步
     document.getElementById('a1').addEventListener('play', () => {
       lyricAudio = document.getElementById('a1');
-      if (lyricData.length) lyricsWrap.classList.remove('hidden');
+      if (!isDone && lyricData.length) lyricsWrap.classList.remove('hidden');
       startLyricSync();
     });
 
-    // 窗口变化时保持当前行居中
     window.addEventListener('resize', () => {
       if (lyricIdx >= 0) centerActiveLine(lyricIdx);
     });
+
+    // ===== 默认媒体载入（从同目录静态文件） =====
+    async function setDefaultMedia() {
+      // 背景音乐
+      setAudioByStaticFile({
+        audio: bgmBind.audio,
+        nameEl: document.getElementById('m1-name'),
+        subEl: document.getElementById('m1-sub'),
+        filename: DEFAULT_BGM,
+        idleText: '支持拖拽音频文件到此处'
+      });
+
+      // 庆典音乐
+      setAudioByStaticFile({
+        audio: celBind.audio,
+        nameEl: document.getElementById('m2-name'),
+        subEl: document.getElementById('m2-sub'),
+        filename: DEFAULT_CELEBRATE,
+        idleText: '支持拖拽音频文件到此处'
+      });
+
+      // 默认歌词（fetch 读取同目录 .lrc）
+      await loadDefaultLrc(DEFAULT_LRC);
+    }
+
+    function setAudioByStaticFile({ audio, nameEl, subEl, filename, idleText }) {
+      const url = assetUrl(filename);
+      audio.src = url;
+      nameEl.textContent = filename;
+      subEl.textContent = '正在读取…';
+      audio.addEventListener('loadedmetadata', () => {
+        if (isFinite(audio.duration)) {
+          const m = Math.floor(audio.duration / 60);
+          const s = Math.floor(audio.duration % 60).toString().padStart(2,'0');
+          subEl.textContent = `时长 ${m}:${s} · 支持拖拽替换`;
+        } else {
+          subEl.textContent = idleText;
+        }
+      }, { once: true });
+    }
+
+    async function loadDefaultLrc(filename) {
+      try {
+        const res = await fetch(assetUrl(filename), { cache: "no-store" });
+        const text = await res.text();
+
+        document.getElementById('lrc-text').value = text;
+        document.getElementById('lrc-name').textContent = filename;
+
+        lyricData = parseLRC(text);
+        renderLyrics(lyricData);
+
+        document.getElementById('lrc-sub').textContent =
+          lyricData.length ? `已加载 ${lyricData.length} 行 · 支持拖拽替换` : '歌词为空或格式不正确';
+
+        // 初始不强制开同步（只有播放时才更新），但渲染后会自动把当前行放中间
+        if (!isDone && lyricData.length) {
+          lyricsWrap.classList.remove('hidden');
+          // 让初始行（0 或 -1）不会乱跳：等待下一次播放再定位
+        }
+      } catch (e) {
+        document.getElementById('lrc-name').textContent = '加载失败';
+        document.getElementById('lrc-sub').textContent = '未能读取默认 LRC（请检查文件是否在同目录）';
+      }
+    }
 
     // ===== 业务循环 =====
     function loop() {
@@ -797,10 +888,8 @@
       document.getElementById('clock').style.opacity = '0';
       document.getElementById('msg-box').classList.add('show');
 
-      // 跨年瞬间：隐藏实时歌词（你的需求）
+      // 跨年瞬间：隐藏歌词并停止同步
       lyricsWrap.classList.add('hidden');
-
-      // 同时停掉歌词同步（省电且避免后台计算）
       stopLyricSync();
 
       document.getElementById('a1').pause();
@@ -822,7 +911,7 @@
       document.getElementById('clock').style.opacity = '1';
       document.getElementById('msg-box').classList.remove('show');
 
-      // 回到倒计时：如果有歌词就显示（跨年隐藏后恢复）
+      // 回到倒计时：若有歌词则显示
       if (lyricData.length) lyricsWrap.classList.remove('hidden');
 
       forceSyncDisplay();
@@ -911,11 +1000,7 @@
         startRafDriver();
 
         const a1 = document.getElementById('a1');
-        // 仅在“倒计时阶段且有歌词”时恢复歌词（跨年阶段保持隐藏）
-        if (!isDone && lyricData.length) {
-          lyricsWrap.classList.remove('hidden');
-          if (!a1.paused) startLyricSync();
-        }
+        if (!isDone && lyricData.length && !a1.paused) startLyricSync();
       }
     });
 
@@ -923,7 +1008,9 @@
     init();
     forceSyncDisplay();
     startRafDriver();
-    resetIdle();
+
+    // 初始：显示面板 3 秒后隐藏
+    showPanelTemporarily();
   </script>
 </body>
 </html>
