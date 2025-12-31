@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2026 跨年倒计时 - 社交同步增强版</title>
+  <style>
+    :root {
+      --bg-color: #000;
+      --card-bg: #222;
+      --text-color: #fff;
+      --red-accent: #e63946;
+      --flip-duration: 0.1s;
+      --card-width: 180px;
+      --card-height: 240px;
+    }
+
+    body, html {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: var(--bg-color); color: var(--text-color);
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      overflow: hidden;
+    }
+
+    canvas { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+
+    .header { position: relative; z-index: 10; text-align: center; margin-bottom: 50px; transition: opacity 0.5s; }
+    .hint { color: var(--red-accent); font-size: 1.5rem; font-weight: 800; letter-spacing: 5px; margin-bottom: 10px; }
+    .date { font-size: 1.8rem; color: #ddd; font-weight: 400; font-family: "STSong", "SimSun", serif; }
+
+    .flip-clock { display: flex; gap: 20px; perspective: 1200px; z-index: 10; transition: opacity 0.5s; }
+    .flip-unit {
+      position: relative; width: var(--card-width); height: var(--card-height);
+      background: var(--card-bg); border-radius: 15px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+      overflow: hidden; contain: layout paint;
+    }
+    .flip-unit::after {
+      content: ""; position: absolute; top: 50%; left: 0; width: 100%; height: 2px;
+      background: rgba(0,0,0,0.7); z-index: 25; transform: translateY(-50%); pointer-events: none;
+    }
+
+    .half {
+      position: absolute; left: 0; width: 100%; height: 50%; overflow: hidden;
+      background: var(--card-bg); backface-visibility: hidden; -webkit-backface-visibility: hidden;
+      will-change: transform, opacity; transform: translateZ(0);
+    }
+    .half.top { top: 0; border-radius: 15px 15px 0 0; border-bottom: 1px solid rgba(0,0,0,0.5); }
+    .half.bottom { bottom: 0; border-radius: 0 0 15px 15px; }
+
+    .num {
+      position: absolute; left: 50%; width: 100%; height: 200%; transform: translateX(-50%) translateZ(0);
+      text-align: center; font-size: calc(var(--card-width) * 0.50); font-weight: 800;
+      line-height: var(--card-height); font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-variant-numeric: tabular-nums; letter-spacing: -0.04em; will-change: transform;
+    }
+    .half.top .num { top: 0; }
+    .half.bottom .num { bottom: 0; }
+
+    .flip { z-index: 30; transform-style: preserve-3d; visibility: hidden; opacity: 0; will-change: transform, opacity; transform: translateZ(0); }
+    .flip-unit.play .flip { visibility: visible; opacity: 1; }
+    .top-flip { transform-origin: bottom; transform: rotateX(0deg); z-index: 31; }
+    .bottom-flip { transform-origin: top; transform: rotateX(90deg); z-index: 32; }
+    .flip-unit.play .top-flip { animation: flipTop calc(var(--flip-duration) / 2) ease-in forwards; }
+    .flip-unit.play .bottom-flip { animation: flipBottom calc(var(--flip-duration) / 2) ease-out forwards; animation-delay: calc(var(--flip-duration) / 2); }
+
+    @keyframes flipTop { from { transform: rotateX(0deg); } to { transform: rotateX(-90deg); } }
+    @keyframes flipBottom { from { transform: rotateX(90deg); } to { transform: rotateX(0deg); } }
+
+    .panel {
+      position: absolute; bottom: 30px; right: 30px; z-index: 1000;
+      background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+      padding: 20px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #eee; transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+      opacity: 0.2; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .panel:hover, .panel.active { opacity: 1; transform: translateY(-5px); background: rgba(30, 30, 30, 0.85); }
+    .panel h3 { margin: 0 0 15px 0; font-size: 14px; color: var(--red-accent); letter-spacing: 2px; text-transform: uppercase; }
+    .control-group { margin-bottom: 15px; }
+    .control-group label { display: block; font-size: 11px; margin-bottom: 6px; color: #aaa; }
+    .panel input, .panel textarea {
+      background: rgba(0,0,0,0.4); color: #fff; border: 1px solid #444; border-radius: 6px;
+      padding: 8px; width: 100%; box-sizing: border-box; font-size: 12px;
+    }
+    .panel textarea { resize: vertical; min-height: 80px; }
+
+    .music-controls { display: flex; gap: 8px; margin-top: 10px; }
+    .btn {
+      flex: 1; padding: 10px; border-radius: 8px; border: none; background: var(--red-accent);
+      color: white; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.3s;
+    }
+    .btn:hover { filter: brightness(1.2); transform: scale(1.02); }
+    .btn.secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+
+    #msg-box {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; opacity: 0; visibility: hidden; transition: 1.5s; z-index: 100;
+    }
+    #msg-box.show { opacity: 1; visibility: visible; }
+    h1 { font-size: 5rem; color: #ffd700; text-shadow: 0 0 30px rgba(255,215,0,0.5); margin: 0; }
+
+    /* ====== 目标时间：点击弹出选择器（自绘图标按钮） ====== */
+    .dt-wrap { position: relative; }
+    .dt-wrap input { padding-right: 44px; }
+    .dt-btn{
+      position: absolute;
+      top: 50%;
+      right: 10px;
+      width: 30px;
+      height: 30px;
+      transform: translateY(-50%);
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.08);
+    }
+    .dt-btn:hover{ background: rgba(255,255,255,0.14); }
+    .dt-btn::before{
+      content:"";
+      position:absolute; inset:7px;
+      border: 2px solid rgba(255,255,255,0.75);
+      border-top-width: 6px;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .dt-btn::after{
+      content:"";
+      position:absolute;
+      left:9px; right:9px; top:13px;
+      height:2px;
+      background: rgba(255,255,255,0.65);
+    }
+
+    /* ====== 文件选择 UI（音乐/歌词统一风格） ====== */
+    .file-ui{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.14);
+      background: rgba(0,0,0,0.35);
+    }
+    .file-ui.dragover{
+      border-color: rgba(230,57,70,0.9);
+      box-shadow: 0 0 0 3px rgba(230,57,70,0.2);
+    }
+    .file-btn{
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color:#fff;
+      cursor:pointer;
+      font-size:12px;
+      white-space:nowrap;
+    }
+    .file-meta{ flex:1; min-width: 0; }
+    .file-name{
+      font-size:12px;
+      color:#fff;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .file-sub{ font-size:10px; color:#888; margin-top:2px; }
+    .file-clear{
+      width:28px;height:28px;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color:#fff;
+      cursor:pointer;
+      display:grid;
+      place-items:center;
+      font-size:16px;
+      line-height:1;
+    }
+    .file-clear:hover{ background: rgba(255,255,255,0.12); }
+
+    /* ====== 网易云式歌词：居中滚动 + 当前行高亮 + 上下淡出 ====== */
+    #lyrics-wrap{
+      position:absolute;
+      left:50%;
+      bottom:50px;
+      transform:translateX(-50%);
+      z-index: 20;
+      width: min(720px, 92vw);
+      pointer-events:none;
+      transition: opacity 0.5s ease, visibility 0.5s ease;
+    }
+    #lyrics-wrap.hidden{
+      opacity: 0;
+      visibility: hidden;
+    }
+    #lyrics-viewport{
+      height: 220px;
+      overflow:hidden;
+      -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+      mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+    }
+    #lyrics-lines{
+      transition: transform 200ms ease-out;
+      will-change: transform;
+    }
+    .lyric-line{
+      text-align:center;
+      font-size: 18px;
+      line-height: 42px;
+      color: rgba(255,255,255,0.45);
+      transform: translateZ(0);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0 12px;
+      box-sizing: border-box;
+    }
+    .lyric-line.active{
+      font-size: 24px;
+      color: rgba(255,255,255,0.95);
+      text-shadow: 0 0 18px rgba(255,255,255,0.18);
+    }
+
+    @media (max-width: 700px) {
+      :root { --card-width: 140px; --card-height: 170px; }
+      .num { font-size: calc(var(--card-width) * 0.52); line-height: var(--card-height); }
+      .panel { width: 260px; right: 10px; bottom: 10px; }
+      #lyrics-viewport{ height: 180px; }
+      .lyric-line{ font-size:16px; line-height:38px; }
+      .lyric-line.active{ font-size:20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="canvas"></canvas>
+
+  <div class="header" id="header">
+    <div class="hint">2026 跨年倒计时间 | 2026 COUNTDOWN</div>
+    <div class="date" id="date-text">正在同步北京时间...</div>
+  </div>
+
+  <div class="flip-clock" id="clock">
+    <div class="flip-unit" id="unit-h">
+      <div class="half top"><div class="num">00</div></div>
+      <div class="half bottom"><div class="num">00</div></div>
+      <div class="half top flip top-flip"><div class="num">00</div></div>
+      <div class="half bottom flip bottom-flip"><div class="num">00</div></div>
+    </div>
+    <div class="flip-unit" id="unit-m">
+      <div class="half top"><div class="num">00</div></div>
+      <div class="half bottom"><div class="num">00</div></div>
+      <div class="half top flip top-flip"><div class="num">00</div></div>
+      <div class="half bottom flip bottom-flip"><div class="num">00</div></div>
+    </div>
+    <div class="flip-unit" id="unit-s">
+      <div class="half top"><div class="num">00</div></div>
+      <div class="half bottom"><div class="num">00</div></div>
+      <div class="half top flip top-flip"><div class="num">00</div></div>
+      <div class="half bottom flip bottom-flip"><div class="num">00</div></div>
+    </div>
+  </div>
+
+  <!-- 歌词显示区 -->
+  <div id="lyrics-wrap" class="hidden">
+    <div id="lyrics-viewport">
+      <div id="lyrics-lines"></div>
+    </div>
+  </div>
+
+  <div id="msg-box">
+    <h1>2026 新年快乐</h1>
+    <p style="font-size: 2rem; margin-top: 10px; color: #fff;">HAPPY NEW YEAR</p>
+  </div>
+
+  <div class="panel" id="control-panel">
+    <h3>Configuration 设定</h3>
+
+    <div class="control-group">
+      <label>目标倒计时 (北京时间)</label>
+      <div class="dt-wrap">
+        <input type="datetime-local" id="target" step="1">
+        <button type="button" class="dt-btn" id="dt-btn" aria-label="选择时间"></button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>背景音乐 (等待中播放)</label>
+
+      <input type="file" id="m1" accept="audio/*" hidden>
+      <div class="file-ui" id="file-ui-1">
+        <button class="file-btn" type="button" id="pick-m1">选择音乐</button>
+        <div class="file-meta">
+          <div class="file-name" id="m1-name">未选择</div>
+          <div class="file-sub" id="m1-sub">支持拖拽音频文件到此处</div>
+        </div>
+        <button class="file-clear" type="button" id="clr-m1" title="清除">×</button>
+      </div>
+
+      <div class="music-controls">
+        <button class="btn" id="btn-play" onclick="toggleMusic()">播放音乐</button>
+        <button class="btn secondary" onclick="generateShareLink()">分享/同步链接</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>庆典音乐 (跨年瞬间播放)</label>
+
+      <input type="file" id="m2" accept="audio/*" hidden>
+      <div class="file-ui" id="file-ui-2">
+        <button class="file-btn" type="button" id="pick-m2">选择音乐</button>
+        <div class="file-meta">
+          <div class="file-name" id="m2-name">未选择</div>
+          <div class="file-sub" id="m2-sub">支持拖拽音频文件到此处</div>
+        </div>
+        <button class="file-clear" type="button" id="clr-m2" title="清除">×</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>实时歌词 (LRC)</label>
+
+      <input type="file" id="lrc1" accept=".lrc,text/plain" hidden>
+      <div class="file-ui" id="file-ui-lrc">
+        <button class="file-btn" type="button" id="pick-lrc">选择歌词</button>
+        <div class="file-meta">
+          <div class="file-name" id="lrc-name">未选择</div>
+          <div class="file-sub" id="lrc-sub">支持拖拽 .lrc 文件到此处</div>
+        </div>
+        <button class="file-clear" type="button" id="clr-lrc" title="清除">×</button>
+      </div>
+
+      <textarea id="lrc-text" rows="4" placeholder="可选：也可以直接粘贴 LRC（例如：[00:12.30]第一句）&#10;支持多个时间戳：[00:10.00][00:12.00]同一句"></textarea>
+      <p style="font-size: 9px; color: #666; margin: 6px 0 0 0;">* 要实现网易云式逐行高亮，请提供带时间戳的 LRC。</p>
+    </div>
+
+    <p style="font-size: 9px; color: #666; margin: 0;">* 更改会自动保存。同步链接包含当前设定的时间。</p>
+  </div>
+
+  <audio id="a1" loop></audio>
+  <audio id="a2"></audio>
+
+  <script>
+    let targetTime = new Date('2026-01-01T00:00:00+08:00');
+    let isDone = false;
+    let isMusicPlaying = false;
+
+    // ===== 北京时间工具（UTC+8） =====
+    function getBJTime() {
+      const n = new Date();
+      return new Date(n.getTime() + (n.getTimezoneOffset() * 60000) + (3600000 * 8));
+    }
+    function pad2(n) { return String(n).padStart(2, '0'); }
+
+    // 将毫秒时间戳格式化为“北京时间”的 datetime-local 值（YYYY-MM-DDTHH:mm:ss）
+    function formatBJForDatetimeLocal(ms) {
+      const d = new Date(ms + 8 * 3600000);
+      const y = d.getUTCFullYear();
+      const m = pad2(d.getUTCMonth() + 1);
+      const da = pad2(d.getUTCDate());
+      const hh = pad2(d.getUTCHours());
+      const mm = pad2(d.getUTCMinutes());
+      const ss = pad2(d.getUTCSeconds());
+      return `${y}-${m}-${da}T${hh}:${mm}:${ss}`;
+    }
+
+    // 解析 datetime-local（按“北京时间”解释）为时间戳
+    function parseDatetimeLocalAsBJ(value) {
+      const [datePart, timePart] = value.split('T');
+      const [y, m, d] = datePart.split('-').map(Number);
+      const [hh, mm, ss] = timePart.split(':').map(Number);
+      const utcMs = Date.UTC(y, m - 1, d, hh - 8, mm, ss || 0);
+      return utcMs;
+    }
+
+    // ===== 初始化与同步 =====
+    function init() {
+      const params = new URLSearchParams(window.location.search);
+      const urlT = params.get('t');
+
+      if (urlT) {
+        targetTime = new Date(parseInt(urlT, 10));
+        saveToLocal();
+      } else {
+        const cached = localStorage.getItem('new_year_target');
+        if (cached) targetTime = new Date(parseInt(cached, 10));
+      }
+
+      document.getElementById('target').value = formatBJForDatetimeLocal(targetTime.getTime());
+    }
+
+    function saveToLocal() {
+      localStorage.setItem('new_year_target', String(targetTime.getTime()));
+    }
+
+    function generateShareLink() {
+      const ts = targetTime.getTime();
+      const url = `${window.location.origin}${window.location.pathname}?t=${ts}`;
+      navigator.clipboard.writeText(url).then(() => {
+        alert("同步链接已复制！发送给朋友，他们打开后将与你的倒计时同步。");
+      });
+    }
+
+    function toggleMusic() {
+      const a = document.getElementById('a1');
+      const btn = document.getElementById('btn-play');
+      if (isMusicPlaying) {
+        a.pause();
+        btn.innerText = "播放音乐";
+      } else {
+        a.play().catch(() => alert("请先选择音乐文件，或点击页面任意位置以允许音频播放。"));
+        btn.innerText = "暂停音乐";
+      }
+      isMusicPlaying = !isMusicPlaying;
+    }
+
+    // ===== 呼吸隐藏面板逻辑 =====
+    let idleTimer;
+    function resetIdle() {
+      const p = document.getElementById('control-panel');
+      p.classList.add('active');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => p.classList.remove('active'), 3000);
+    }
+    document.addEventListener('mousemove', resetIdle);
+    document.addEventListener('click', resetIdle);
+
+    // ===== 目标时间：点击即弹出选择器（不依赖空格） =====
+    const targetInput = document.getElementById('target');
+    const dtBtn = document.getElementById('dt-btn');
+
+    function openDateTimePicker() {
+      targetInput.focus({ preventScroll: true });
+      if (typeof targetInput.showPicker === 'function') targetInput.showPicker();
+    }
+    targetInput.addEventListener('pointerdown', (e) => { if (e.button === 0) openDateTimePicker(); });
+    dtBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); openDateTimePicker(); });
+
+    // ===== 通用文件选择 UI：拖拽、清除、显示文件名（音乐/歌词统一） =====
+    function wireFileUI({ fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId, acceptDrop = true, onFile }) {
+      const inp = document.getElementById(fileInputId);
+      const ui = document.getElementById(uiId);
+      const pickBtn = document.getElementById(pickBtnId);
+      const clearBtn = document.getElementById(clearBtnId);
+      const nameEl = document.getElementById(nameElId);
+      const subEl = document.getElementById(subElId);
+
+      const setSub = (t) => { if (subEl) subEl.textContent = t; };
+
+      async function setFile(file) {
+        if (!file) return;
+        nameEl.textContent = file.name || '已选择';
+        if (typeof onFile === 'function') await onFile(file);
+      }
+
+      function clearFile() {
+        inp.value = '';
+        nameEl.textContent = '未选择';
+        if (typeof onFile === 'function') onFile(null);
+      }
+
+      pickBtn.addEventListener('click', () => inp.click());
+      inp.addEventListener('change', (e) => setFile(e.target.files && e.target.files[0]));
+
+      clearBtn.addEventListener('click', () => {
+        clearFile();
+        // 不在这里改 sub 文案，让各模块自行设置（音乐/歌词不同）
+      });
+
+      if (acceptDrop) {
+        ui.addEventListener('dragover', (e) => { e.preventDefault(); ui.classList.add('dragover'); });
+        ui.addEventListener('dragleave', () => ui.classList.remove('dragover'));
+        ui.addEventListener('drop', (e) => {
+          e.preventDefault();
+          ui.classList.remove('dragover');
+          const f = e.dataTransfer.files && e.dataTransfer.files[0];
+          if (f) setFile(f);
+        });
+      }
+
+      return { setSub, clearFile, setFile };
+    }
+
+    // ===== 音乐：接入 audio，并显示时长 =====
+    function bindAudioPicker({ fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId, audioElId, onAfterSet }) {
+      const audio = document.getElementById(audioElId);
+      const ui = wireFileUI({
+        fileInputId, uiId, pickBtnId, clearBtnId, nameElId, subElId,
+        onFile: async (file) => {
+          if (!file) {
+            audio.removeAttribute('src');
+            audio.load();
+            ui.setSub('支持拖拽音频文件到此处');
+            if (typeof onAfterSet === 'function') onAfterSet(null, audio);
+            return;
+          }
+          const url = URL.createObjectURL(file);
+          audio.src = url;
+          ui.setSub('正在读取…');
+          audio.addEventListener('loadedmetadata', () => {
+            if (isFinite(audio.duration)) {
+              const m = Math.floor(audio.duration / 60);
+              const s = Math.floor(audio.duration % 60).toString().padStart(2,'0');
+              ui.setSub(`时长 ${m}:${s} · 支持拖拽替换`);
+            } else {
+              ui.setSub('支持拖拽替换');
+            }
+          }, { once: true });
+
+          if (typeof onAfterSet === 'function') onAfterSet(file, audio);
+        }
+      });
+      return ui;
+    }
+
+    bindAudioPicker({
+      fileInputId:'m1', uiId:'file-ui-1', pickBtnId:'pick-m1', clearBtnId:'clr-m1',
+      nameElId:'m1-name', subElId:'m1-sub', audioElId:'a1',
+      onAfterSet: (file, audio) => { if (file && isMusicPlaying) audio.play(); }
+    });
+
+    bindAudioPicker({
+      fileInputId:'m2', uiId:'file-ui-2', pickBtnId:'pick-m2', clearBtnId:'clr-m2',
+      nameElId:'m2-name', subElId:'m2-sub', audioElId:'a2'
+    });
+
+    // ===== 翻页卡片（修复：animationcancel + 超时兜底 + force） =====
+    class Card {
+      constructor(id) {
+        this.el = document.getElementById(id);
+        this.top = this.el.querySelector('.half.top:not(.flip) .num');
+        this.bottom = this.el.querySelector('.half.bottom:not(.flip) .num');
+        this.topFlip = this.el.querySelector('.top-flip .num');
+        this.bottomFlip = this.el.querySelector('.bottom-flip .num');
+        this.bottomFlipEl = this.el.querySelector('.half.bottom.flip.bottom-flip');
+
+        this.curr = "00";
+        this.animating = false;
+        this.pending = null;
+        this._fallbackTimer = null;
+
+        this.finish = () => {
+          if (!this.animating) return;
+          clearTimeout(this._fallbackTimer);
+          this._fallbackTimer = null;
+
+          this.el.classList.remove('play');
+          this.top.textContent = this.curr;
+          this.bottom.textContent = this.curr;
+          this.animating = false;
+
+          if (this.pending !== null && this.pending !== this.curr) {
+            const n = this.pending;
+            this.pending = null;
+            this.set(n);
+          }
+        };
+
+        this.bottomFlipEl.addEventListener('animationend', this.finish);
+        this.bottomFlipEl.addEventListener('animationcancel', this.finish);
+      }
+
+      force(next) {
+        clearTimeout(this._fallbackTimer);
+        this._fallbackTimer = null;
+        this.animating = false;
+        this.pending = null;
+        this.el.classList.remove('play');
+        this.curr = next;
+        this.top.textContent = next;
+        this.bottom.textContent = next;
+        this.topFlip.textContent = next;
+        this.bottomFlip.textContent = next;
+      }
+
+      set(next) {
+        if (next === this.curr) return;
+        if (this.animating) { this.pending = next; return; }
+
+        this.animating = true;
+
+        this.top.textContent = this.curr;
+        this.bottom.textContent = this.curr;
+        this.topFlip.textContent = this.curr;
+        this.bottomFlip.textContent = next;
+
+        this.el.classList.remove('play');
+        requestAnimationFrame(() => this.el.classList.add('play'));
+
+        this.curr = next;
+
+        const root = getComputedStyle(document.documentElement);
+        const durSec = parseFloat(root.getPropertyValue('--flip-duration')) || 0.1;
+        const durMs = Math.ceil(durSec * 1000) + 80;
+
+        clearTimeout(this._fallbackTimer);
+        this._fallbackTimer = setTimeout(this.finish, durMs);
+      }
+    }
+
+    const hCard = new Card('unit-h'), mCard = new Card('unit-m'), sCard = new Card('unit-s');
+
+    // ===== 网易云式实时歌词（LRC） =====
+    const lyricsWrap = document.getElementById('lyrics-wrap');
+    const viewportEl = document.getElementById('lyrics-viewport');
+    const linesEl = document.getElementById('lyrics-lines');
+
+    let lyricData = [];   // [{t, text}]
+    let lyricIdx = -1;
+    let lyricRaf = null;
+    let lyricAudio = document.getElementById('a1'); // 默认跟随等待音乐
+
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function parseLRC(lrc) {
+      const out = [];
+      const rows = lrc.split(/\r?\n/);
+      for (const row of rows) {
+        const times = [...row.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g)];
+        if (!times.length) continue;
+
+        const text = row.replace(/\[[^\]]+\]/g, '').trim();
+        for (const m of times) {
+          const mm = Number(m[1]);
+          const ss = Number(m[2]);
+          const ms = m[3] ? Number(m[3].padEnd(3,'0')) : 0;
+          out.push({ t: mm * 60 + ss + ms / 1000, text: text || ' ' });
+        }
+      }
+      out.sort((a,b) => a.t - b.t);
+      return out;
+    }
+
+    function renderLyrics(data) {
+      linesEl.innerHTML = data.map(d => `<div class="lyric-line">${escapeHtml(d.text)}</div>`).join('');
+      lyricIdx = -1;
+      linesEl.style.transform = 'translateY(0px)';
+
+      if (data.length) lyricsWrap.classList.remove('hidden');
+      else lyricsWrap.classList.add('hidden');
+    }
+
+    function findLyricIndex(t) {
+      let lo = 0, hi = lyricData.length - 1, ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (lyricData[mid].t <= t) { ans = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      return ans;
+    }
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    // 让 active 行严格“垂直居中”显示（按真实 DOM 测量，不用固定行高）
+    function centerActiveLine(i) {
+      const cur = linesEl.children[i];
+      if (!cur) return;
+
+      const viewportH = viewportEl.clientHeight || 220;
+      const centerY = viewportH / 2;
+
+      const first = linesEl.children[0];
+      const last = linesEl.children[linesEl.children.length - 1];
+
+      const curCenter = cur.offsetTop + cur.offsetHeight / 2;
+      const firstCenter = first.offsetTop + first.offsetHeight / 2;
+      const lastCenter = last.offsetTop + last.offsetHeight / 2;
+
+      // translateY 目标：把 curCenter 移到 centerY
+      let target = centerY - curCenter;
+
+      // 约束：不让内容整体“过度”滑出（保持首尾也最多只能居中）
+      const maxTranslate = centerY - firstCenter;
+      const minTranslate = centerY - lastCenter;
+      target = clamp(target, minTranslate, maxTranslate);
+
+      linesEl.style.transform = `translateY(${target}px)`;
+    }
+
+    function setActiveLine(i) {
+      if (i === lyricIdx) return;
+
+      const prev = linesEl.children[lyricIdx];
+      if (prev) prev.classList.remove('active');
+
+      const cur = linesEl.children[i];
+      if (cur) cur.classList.add('active');
+
+      lyricIdx = i;
+
+      // 等样式（active 字号变化）生效后再居中，避免抖动
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => centerActiveLine(i));
+      });
+    }
+
+    function stopLyricSync(){
+      if (lyricRaf) cancelAnimationFrame(lyricRaf);
+      lyricRaf = null;
+    }
+
+    function startLyricSync(){
+      stopLyricSync();
+      const tick = () => {
+        // 跨年时隐藏歌词：不再更新
+        if (lyricsWrap.classList.contains('hidden')) {
+          lyricRaf = requestAnimationFrame(tick);
+          return;
+        }
+        if (!lyricData.length || !lyricAudio) {
+          lyricRaf = requestAnimationFrame(tick);
+          return;
+        }
+        const t = lyricAudio.currentTime || 0;
+        const i = findLyricIndex(t);
+        if (i >= 0) setActiveLine(i);
+        lyricRaf = requestAnimationFrame(tick);
+      };
+      lyricRaf = requestAnimationFrame(tick);
+    }
+
+    // 歌词文件 UI（与音乐一致，支持拖拽）
+    const lrcUI = wireFileUI({
+      fileInputId:'lrc1',
+      uiId:'file-ui-lrc',
+      pickBtnId:'pick-lrc',
+      clearBtnId:'clr-lrc',
+      nameElId:'lrc-name',
+      subElId:'lrc-sub',
+      acceptDrop: true,
+      onFile: async (file) => {
+        if (!file) {
+          document.getElementById('lrc-text').value = '';
+          lyricData = [];
+          renderLyrics(lyricData);
+          document.getElementById('lrc-sub').textContent = '支持拖拽 .lrc 文件到此处';
+          return;
+        }
+        document.getElementById('lrc-sub').textContent = '正在读取…';
+        const text = await file.text();
+        document.getElementById('lrc-text').value = text;
+        lyricData = parseLRC(text);
+        renderLyrics(lyricData);
+        document.getElementById('lrc-sub').textContent = `已加载 ${lyricData.length} 行 · 支持拖拽替换`;
+        // 若正在播放，立刻同步
+        startLyricSync();
+      }
+    });
+
+    // 粘贴 LRC：实时解析（同样启用歌词显示）
+    document.getElementById('lrc-text').addEventListener('input', (e) => {
+      const text = e.target.value || '';
+      lyricData = parseLRC(text);
+      renderLyrics(lyricData);
+      document.getElementById('lrc-name').textContent = text.trim() ? '已粘贴歌词' : '未选择';
+      document.getElementById('lrc-sub').textContent = text.trim() ? `已加载 ${lyricData.length} 行 · 可拖拽替换` : '支持拖拽 .lrc 文件到此处';
+      startLyricSync();
+    });
+
+    // a1 播放时启动同步
+    document.getElementById('a1').addEventListener('play', () => {
+      lyricAudio = document.getElementById('a1');
+      if (lyricData.length) lyricsWrap.classList.remove('hidden');
+      startLyricSync();
+    });
+
+    // 窗口变化时保持当前行居中
+    window.addEventListener('resize', () => {
+      if (lyricIdx >= 0) centerActiveLine(lyricIdx);
+    });
+
+    // ===== 业务循环 =====
+    function loop() {
+      const now = getBJTime();
+      const week = ['周日','周一','周二','周三','周四','周五','周六'][now.getDay()];
+      document.getElementById('date-text').innerText = `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 ${week}`;
+
+      const diff = targetTime - now;
+      if (diff <= 0) {
+        if (!isDone) { isDone = true; celebrate(); }
+        hCard.set("00"); mCard.set("00"); sCard.set("00");
+        return;
+      }
+
+      const hh = Math.floor(diff / 3600000).toString().padStart(2, '0');
+      const mm = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+      const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+
+      hCard.set(hh); mCard.set(mm); sCard.set(ss);
+    }
+
+    function celebrate() {
+      document.getElementById('header').style.opacity = '0';
+      document.getElementById('clock').style.opacity = '0';
+      document.getElementById('msg-box').classList.add('show');
+
+      // 跨年瞬间：隐藏实时歌词（你的需求）
+      lyricsWrap.classList.add('hidden');
+
+      // 同时停掉歌词同步（省电且避免后台计算）
+      stopLyricSync();
+
+      document.getElementById('a1').pause();
+      const a2 = document.getElementById('a2');
+      if (a2.src) a2.play();
+
+      fire();
+    }
+
+    // ===== 事件绑定（目标时间） =====
+    document.getElementById('target').onchange = (e) => {
+      const ms = parseDatetimeLocalAsBJ(e.target.value);
+      targetTime = new Date(ms);
+
+      saveToLocal();
+      isDone = false;
+
+      document.getElementById('header').style.opacity = '1';
+      document.getElementById('clock').style.opacity = '1';
+      document.getElementById('msg-box').classList.remove('show');
+
+      // 回到倒计时：如果有歌词就显示（跨年隐藏后恢复）
+      if (lyricData.length) lyricsWrap.classList.remove('hidden');
+
+      forceSyncDisplay();
+    };
+
+    // ===== 烟花 =====
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let ps = [];
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.onresize = resize; resize();
+
+    function fire() {
+      function draw() {
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (Math.random() < 0.15) {
+          const x = Math.random() * canvas.width;
+          const y = Math.random() * canvas.height / 2;
+          const hue = Math.random() * 360;
+          for (let i = 0; i < 50; i++) {
+            ps.push({ x, y, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10, h: hue, a: 1 });
+          }
+        }
+        for (let i = ps.length - 1; i >= 0; i--) {
+          const p = ps[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.1; p.a -= 0.015;
+          ctx.globalAlpha = Math.max(p.a, 0);
+          ctx.fillStyle = `hsl(${p.h}, 100%, 60%)`;
+          ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2); ctx.fill();
+          if (p.a <= 0) ps.splice(i, 1);
+        }
+        if (isDone) requestAnimationFrame(draw);
+      }
+      draw();
+    }
+
+    // ===== RAF 驱动：秒变化才更新 =====
+    let rafId = null;
+    let lastSec = -1;
+
+    function rafDriver() {
+      const nowBJ = getBJTime();
+      const sec = Math.floor(nowBJ.getTime() / 1000);
+      if (sec !== lastSec) {
+        lastSec = sec;
+        loop();
+      }
+      rafId = requestAnimationFrame(rafDriver);
+    }
+
+    function startRafDriver() {
+      stopRafDriver();
+      lastSec = -1;
+      rafId = requestAnimationFrame(rafDriver);
+    }
+
+    function stopRafDriver() {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    }
+
+    function forceSyncDisplay() {
+      const now = getBJTime();
+      const diff = targetTime - now;
+
+      if (diff <= 0) {
+        hCard.force("00"); mCard.force("00"); sCard.force("00");
+        return;
+      }
+
+      const hh = Math.floor(diff / 3600000).toString().padStart(2, '0');
+      const mm = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+      const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+
+      hCard.force(hh); mCard.force(mm); sCard.force(ss);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopRafDriver();
+        stopLyricSync();
+      } else {
+        forceSyncDisplay();
+        startRafDriver();
+
+        const a1 = document.getElementById('a1');
+        // 仅在“倒计时阶段且有歌词”时恢复歌词（跨年阶段保持隐藏）
+        if (!isDone && lyricData.length) {
+          lyricsWrap.classList.remove('hidden');
+          if (!a1.paused) startLyricSync();
+        }
+      }
+    });
+
+    // ===== 启动 =====
+    init();
+    forceSyncDisplay();
+    startRafDriver();
+    resetIdle();
+  </script>
+</body>
+</html>
